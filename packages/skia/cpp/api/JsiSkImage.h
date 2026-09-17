@@ -397,7 +397,8 @@ public:
                                                             std::move(image)) {
     // Get the dispatcher for the current thread
     _dispatcher = Dispatcher::getDispatcher();
-    // Process any pending operations (e.g. deletions of previous resources)
+    // Safety net for threads without a wake callback: process any pending
+    // releases (the dispatcher normally drains itself, see JsiSkDispatcher.h)
     _dispatcher->processQueue();
   }
 
@@ -406,8 +407,9 @@ public:
     if (!isDisposed()) {
       // This JSI Object is being deleted from a GC, which might happen
       // on a separate Thread. GPU resources (like SkImage) must be deleted
-      // on the same Thread they were created on, so in this case we schedule
-      // deletion to run on the Thread this Object was created on.
+      // on the same Thread they were created on, so we hand the release to
+      // the Dispatcher of that Thread. It runs inline when we are already on
+      // it, and otherwise queues it and wakes that Thread to drain the queue.
       auto image = getObjectUnchecked();
       if (image && _dispatcher) {
         _dispatcher->run([image]() {

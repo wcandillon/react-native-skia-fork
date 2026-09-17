@@ -39,6 +39,9 @@ public:
 
   void runOnMainThread(std::function<void()>) override;
 
+  std::shared_ptr<RNSkFrameScheduler>
+  makeFrameScheduler(std::function<void()> onFrame) override;
+
   sk_sp<SkImage> takeScreenshotFromViewTag(size_t tag) override;
 
   sk_sp<SkImage> makeImageFromNativeBuffer(void *buffer) override;

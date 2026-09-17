@@ -34,6 +34,7 @@ import type { Video } from "./Video";
 import type { NativeBufferFactory } from "./NativeBuffer";
 import type { JsiRecorder } from "./Recorder";
 import type { SkottieFactory } from "./Skottie";
+import type { ContextFactory } from "./Context";
 
 /**
  * Declares the interface for the native Skia API
@@ -103,6 +104,12 @@ export interface Skia {
   Video: (url: string) => Promise<Video> | Video;
   NativeBuffer: NativeBufferFactory;
   Recorder(): JsiRecorder;
+  /**
+   * Produces recordings for SkiaRecordingView: frames recorded on the
+   * calling thread against a target described by size and bit depth, without
+   * a view. See {@link ContextFactory}.
+   */
+  Context: ContextFactory;
   /**
    * Raw WGPUDevice pointer of Skia's Graphite device, as a BigInt. Pass it to
    * react-native-webgpu's importDevice() to get a GPUDevice sharing Skia's

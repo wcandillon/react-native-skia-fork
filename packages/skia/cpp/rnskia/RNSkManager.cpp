@@ -8,6 +8,7 @@
 #include "RNSkJsiViewApi.h"
 #include "RNSkView.h"
 #include "api/JsiSkApi.h"
+#include "api/JsiSkDispatcher.h"
 
 namespace RNSkia {
 namespace jsi = facebook::jsi;
@@ -21,6 +22,39 @@ RNSkManager::RNSkManager(
       _viewApi(std::make_shared<RNSkJsiViewApi>(platformContext)) {
   // Install bindings
   installBindings();
+  installDispatcherWakes();
+}
+
+void RNSkManager::installDispatcherWakes() {
+  // GPU-backed wrappers (images, surfaces, pictures) hand their release to
+  // the Dispatcher of the thread that created them, because the Hermes GC
+  // finalizes them on its own thread. Without a wake callback the queue is
+  // only drained when the next wrapper is created on that thread, so freed
+  // resources could sit in the queue indefinitely. Register a poster for the
+  // two threads that create Skia objects: the JS thread and the main thread
+  // (which also runs the worklet UI runtime and the renderer). Registration
+  // is posted to each thread since it must run on the thread it posts to.
+  std::weak_ptr<RNSkPlatformContext> weakContext = _platformContext;
+  _platformContext->runOnJavascriptThread([weakContext]() {
+    Dispatcher::registerWake([weakContext](std::function<void()> task) {
+      auto context = weakContext.lock();
+      if (!context) {
+        return false;
+      }
+      context->runOnJavascriptThread(std::move(task));
+      return true;
+    });
+  });
+  _platformContext->runOnMainThread([weakContext]() {
+    Dispatcher::registerWake([weakContext](std::function<void()> task) {
+      auto context = weakContext.lock();
+      if (!context) {
+        return false;
+      }
+      context->runOnMainThread(std::move(task));
+      return true;
+    });
+  });
 }
 
 RNSkManager::~RNSkManager() {

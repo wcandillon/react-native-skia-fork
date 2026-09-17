@@ -90,6 +90,38 @@ bool RNSkMetalCanvasProvider::renderToCanvas(
   return false;
 };
 
+#if defined(SK_GRAPHITE)
+std::optional<RNSkia::RNSkDeferredTarget>
+RNSkMetalCanvasProvider::getDeferredTarget() {
+  if (!_ctx) {
+    return std::nullopt;
+  }
+  return _ctx->getDeferredTarget();
+}
+
+bool RNSkMetalCanvasProvider::presentRecording(
+    skgpu::graphite::Recording *recording) {
+  if (!_ctx || ![[NSThread currentThread] isMainThread]) {
+    return false;
+  }
+  // Same background guard as renderToCanvas: presenting while backgrounded
+  // can clear the CAMetalLayer (#1257). The frame stays pending and the
+  // display link, which does not fire in the background, replays it on
+  // foregrounding.
+#if !TARGET_OS_OSX
+  auto state = UIApplication.sharedApplication.applicationState;
+  bool appIsBackgrounded = (state == UIApplicationStateBackground);
+#else
+  bool appIsBackgrounded = NSApplication.sharedApplication.isHidden;
+#endif // !TARGET_OS_OSX
+  if (appIsBackgrounded) {
+    _requestRedraw();
+    return false;
+  }
+  return _ctx->presentRecording(recording);
+}
+#endif
+
 void RNSkMetalCanvasProvider::setSize(int width, int height) {
   _layer.frame = CGRectMake(0, 0, width, height);
   auto w = width * _context->getPixelDensity();

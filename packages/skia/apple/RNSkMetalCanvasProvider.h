@@ -26,6 +26,11 @@ public:
 
   bool renderToCanvas(const std::function<void(SkCanvas *)> &cb) override;
 
+#if defined(SK_GRAPHITE)
+  std::optional<RNSkia::RNSkDeferredTarget> getDeferredTarget() override;
+  bool presentRecording(skgpu::graphite::Recording *recording) override;
+#endif
+
   void setSize(int width, int height);
   void setUseP3ColorSpace(bool useP3ColorSpace);
   void setHighBitDepth(bool highBitDepth);

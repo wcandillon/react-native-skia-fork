@@ -1,11 +1,17 @@
 
 #pragma once
 
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "RNSkFrameScheduler.h"
 #include "RNSkPlatformContext.h"
 #include "jsi/ViewProperty.h"
 
@@ -20,6 +26,10 @@
 #include "include/core/SkSurface.h"
 
 #pragma clang diagnostic pop
+
+#if defined(SK_GRAPHITE)
+#include "RNSkDeferredTarget.h"
+#endif
 
 namespace RNSkia {
 
@@ -45,12 +55,42 @@ public:
    */
   virtual bool renderToCanvas(const std::function<void(SkCanvas *)> &) = 0;
 
+#if defined(SK_GRAPHITE)
+  /**
+   Thread-safe description of the swapchain texture a Recording must target
+   to be presentable by this provider. Empty while there is no surface.
+   */
+  virtual std::optional<RNSkDeferredTarget> getDeferredTarget() {
+    return std::nullopt;
+  }
+
+  /**
+   Presents a Recording made against getDeferredTarget(): binds the current
+   swapchain texture, inserts, submits once and presents. Main thread only.
+   */
+  virtual bool presentRecording(skgpu::graphite::Recording *recording) {
+    return false;
+  }
+#endif
+
 protected:
   std::function<void()> _requestRedraw;
 };
 
+/**
+ Presentation statistics of a view, for benchmarks: how many frames reached
+ the screen and when (milliseconds on the same steady clock as
+ RNSkRenderer::nowMs, most recent last).
+ */
+struct RNSkPresentStats {
+  uint64_t presented = 0;
+  std::vector<double> timestampsMs;
+};
+
 class RNSkRenderer {
 public:
+  static constexpr size_t kPresentHistory = 240;
+
   explicit RNSkRenderer(std::function<void()> requestRedraw)
       : _requestRedraw(std::move(requestRedraw)), _showDebugOverlays(false) {}
 
@@ -62,9 +102,49 @@ public:
   }
   bool getShowDebugOverlays() const { return _showDebugOverlays; }
 
+  /**
+   True while a frame handed to the view has not been presented yet. A
+   producer can use this as backpressure: recording a new frame now would
+   only replace the pending one.
+   */
+  virtual bool hasPendingFrame() { return false; }
+
+  static double nowMs() {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+  }
+
+  RNSkPresentStats getPresentStats() {
+    std::lock_guard<std::mutex> lock(_statsMutex);
+    RNSkPresentStats stats;
+    stats.presented = _presented;
+    size_t count = std::min(_presented, static_cast<uint64_t>(kPresentHistory));
+    stats.timestampsMs.reserve(count);
+    for (size_t i = 0; i < count; i++) {
+      stats.timestampsMs.push_back(
+          _timestamps[(_head + kPresentHistory - count + i) % kPresentHistory]);
+    }
+    return stats;
+  }
+
 protected:
+  // Called right after a frame was handed to the swapchain.
+  void notePresented() {
+    std::lock_guard<std::mutex> lock(_statsMutex);
+    _timestamps[_head] = nowMs();
+    _head = (_head + 1) % kPresentHistory;
+    _presented++;
+  }
+
   std::function<void()> _requestRedraw;
   bool _showDebugOverlays;
+
+private:
+  std::mutex _statsMutex;
+  std::array<double, kPresentHistory> _timestamps{};
+  size_t _head = 0;
+  uint64_t _presented = 0;
 };
 
 class RNSkOffscreenCanvasProvider : public RNSkCanvasProvider {
@@ -157,29 +237,32 @@ public:
   virtual void setJsiProperties(
       std::unordered_map<std::string, RNJsi::ViewProperty> &props) = 0;
 
+  /**
+   Asks for the view to be rendered (or, for a recording view, presented) on
+   the main thread at the next vsync. Requests within one vsync are coalesced
+   so that the swapchain (configured with Fifo) is presented at most once per
+   vsync. May be called from any thread.
+   */
   void requestRedraw() {
-    if (!_redrawRequested) {
-      _redrawRequested = true;
-      // Capture a weak pointer to this
-      auto weakThis = std::weak_ptr<RNSkView>(shared_from_this());
-
-      _platformContext->runOnMainThread([weakThis]() {
-        // Try to lock the weak pointer
-        if (auto strongThis = weakThis.lock()) {
-          // Only proceed if the object still exists
-          if (strongThis->_renderer && strongThis->_redrawRequested) {
-            strongThis->_renderer->renderImmediate(strongThis->_canvasProvider);
-            strongThis->_redrawRequested = false;
-          }
-        }
-      });
+    if (!_redrawRequested.exchange(true)) {
+      getFrameScheduler()->requestFrame();
     }
   }
 
+  /**
+   Renders synchronously on the calling (main) thread, used when the platform
+   needs content right now (drawRect, surface creation).
+   */
   void redraw() {
-    _renderer->renderImmediate(_canvasProvider);
     _redrawRequested = false;
+    _renderer->renderImmediate(_canvasProvider);
   }
+
+  /**
+   Called by the platform view after the canvas provider's surface was
+   created, resized or recreated.
+   */
+  virtual void onSurfaceChanged() {}
 
   /**
    Sets the native id of the view
@@ -202,7 +285,7 @@ public:
   /**
    Renders the view into an SkImage instead of the screen.
    */
-  sk_sp<SkImage> makeImageSnapshot(SkRect *bounds) {
+  virtual sk_sp<SkImage> makeImageSnapshot(SkRect *bounds) {
 
     auto provider = std::make_shared<RNSkOffscreenCanvasProvider>(
         getPlatformContext(), std::bind(&RNSkView::requestRedraw, this),
@@ -233,9 +316,28 @@ protected:
   }
 
 private:
+  std::shared_ptr<RNSkFrameScheduler> getFrameScheduler() {
+    std::lock_guard<std::mutex> lock(_schedulerMutex);
+    if (!_frameScheduler) {
+      // The scheduler only holds a weak reference: a view can be released on
+      // any thread while a frame is pending.
+      auto weakThis = std::weak_ptr<RNSkView>(shared_from_this());
+      _frameScheduler = _platformContext->makeFrameScheduler([weakThis]() {
+        if (auto strongThis = weakThis.lock()) {
+          if (strongThis->_redrawRequested.exchange(false)) {
+            strongThis->_renderer->renderImmediate(strongThis->_canvasProvider);
+          }
+        }
+      });
+    }
+    return _frameScheduler;
+  }
+
   std::shared_ptr<RNSkPlatformContext> _platformContext;
   std::shared_ptr<RNSkCanvasProvider> _canvasProvider;
   std::shared_ptr<RNSkRenderer> _renderer;
+  std::shared_ptr<RNSkFrameScheduler> _frameScheduler;
+  std::mutex _schedulerMutex;
 
   size_t _nativeId;
 

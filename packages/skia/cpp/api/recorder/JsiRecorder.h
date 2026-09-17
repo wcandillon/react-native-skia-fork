@@ -93,6 +93,21 @@ public:
     return jsi::Value::undefined();
   }
 
+  // Plays the recorded commands straight into a canvas (a deferred canvas
+  // from Skia.Context, for instance) instead of into a new SkPicture.
+  JSI_HOST_FUNCTION(draw) {
+    if (count < 1 || !arguments[0].isObject()) {
+      throw jsi::JSError(runtime, "draw() requires a Canvas parameter");
+    }
+    auto jsiCanvas = tryGetJsiObject<JsiSkCanvas>(runtime, arguments[0]);
+    if (!jsiCanvas || jsiCanvas->getCanvas() == nullptr) {
+      throw jsi::JSError(runtime, "Invalid Canvas object provided to draw()");
+    }
+    DrawingCtx ctx(jsiCanvas->getCanvas());
+    getObject()->play(&ctx);
+    return jsi::Value::undefined();
+  }
+
   JSI_HOST_FUNCTION(applyUpdates) {
     auto values = arguments[0].asObject(runtime).asArray(runtime);
     auto size = values.size(runtime);
@@ -374,6 +389,7 @@ public:
     installHostMethod(runtime, prototype, "drawSkottie",
                       &JsiRecorder::drawSkottie);
     installHostMethod(runtime, prototype, "play", &JsiRecorder::play);
+    installHostMethod(runtime, prototype, "draw", &JsiRecorder::draw);
     installHostMethod(runtime, prototype, "applyUpdates",
                       &JsiRecorder::applyUpdates);
     installHostMethod(runtime, prototype, "reset", &JsiRecorder::reset);

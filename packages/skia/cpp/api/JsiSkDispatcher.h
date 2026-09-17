@@ -1,26 +1,83 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 
 namespace RNSkia {
 
 /**
- * Thread-local dispatcher for managing deferred operations.
- * Each thread gets its own dispatcher instance for queueing operations
- * to be executed on that specific thread.
+ * Thread-local dispatcher for deferring work to the thread that owns a GPU
+ * resource.
+ *
+ * GPU-backed Skia objects (images, surfaces, pictures) must be released on the
+ * thread that created them. Hermes runs its garbage collector on a dedicated
+ * thread, so a wrapper's destructor may run on the wrong thread. Wrappers hand
+ * the release to the dispatcher of their creating thread instead.
+ *
+ * Draining is driven by the destructor, not by the next allocation: when an
+ * operation is queued from a foreign thread, the dispatcher posts a single
+ * coalesced "process the queue" task to the owning thread through the wake
+ * callback registered for that thread (see registerWake). Threads without a
+ * wake callback fall back to processQueue() being called explicitly, which the
+ * wrappers still do on construction as a safety net.
  */
 class Dispatcher {
-private:
+public:
   using Operation = std::function<void()>;
 
+  /**
+   * Posts a task to the owning thread's event loop. Returns false if the task
+   * could not be posted (for instance because the platform context is gone),
+   * in which case the dispatcher will try again on the next queued operation.
+   */
+  using WakeFn = std::function<bool(std::function<void()>)>;
+
+private:
   struct DispatcherData {
+    const std::thread::id threadId;
+
+    // Guarded by queueMutex
     std::queue<Operation> operationQueue;
+    WakeFn wake;
     std::mutex queueMutex;
+
+    // True while a drain task is in flight on the owning thread.
+    std::atomic<bool> drainScheduled{false};
+
+    explicit DispatcherData(std::thread::id id) : threadId(id) {}
+
+    ~DispatcherData() {
+      // This runs when the last handle to the data is released. If the owning
+      // thread is gone and a wrapper is the last holder, we may be on the GC
+      // thread. Never destroy the queued releases here in that case: hand them
+      // to the owning thread's event loop when we still can.
+      if (operationQueue.empty()) {
+        return;
+      }
+      if (std::this_thread::get_id() == threadId || !wake) {
+        Drain(operationQueue);
+        return;
+      }
+      auto pending =
+          std::make_shared<std::queue<Operation>>(std::move(operationQueue));
+      if (!wake([pending]() { Drain(*pending); })) {
+        Drain(*pending);
+      }
+    }
+
+    static void Drain(std::queue<Operation> &operations) {
+      while (!operations.empty()) {
+        auto op = std::move(operations.front());
+        operations.pop();
+        op();
+      }
+    }
   };
 
   // Thread-local storage for dispatcher data
@@ -33,20 +90,63 @@ private:
       _dispatcherRegistry;
 
   std::shared_ptr<DispatcherData> _data;
-  std::thread::id _threadId;
 
-public:
-  Dispatcher() : _threadId(std::this_thread::get_id()) {
-    // Get or create dispatcher data for current thread
+  static std::shared_ptr<DispatcherData> currentThreadData() {
     if (!_threadDispatcher) {
-      _threadDispatcher = std::make_shared<DispatcherData>();
+      _threadDispatcher =
+          std::make_shared<DispatcherData>(std::this_thread::get_id());
 
       // Register in global registry
       std::lock_guard<std::mutex> lock(_registryMutex);
-      _dispatcherRegistry[_threadId] = _threadDispatcher;
+      _dispatcherRegistry[_threadDispatcher->threadId] = _threadDispatcher;
     }
-    _data = _threadDispatcher;
+    return _threadDispatcher;
   }
+
+  explicit Dispatcher(std::shared_ptr<DispatcherData> data)
+      : _data(std::move(data)) {}
+
+  /**
+   * Swaps the pending operations out under the lock and runs them. Must be
+   * called on the owning thread.
+   */
+  static size_t drain(const std::shared_ptr<DispatcherData> &data) {
+    std::queue<Operation> operations;
+    {
+      std::lock_guard<std::mutex> lock(data->queueMutex);
+      operations.swap(data->operationQueue);
+    }
+    size_t count = operations.size();
+    DispatcherData::Drain(operations);
+    return count;
+  }
+
+  /**
+   * Posts one drain task to the owning thread unless one is already pending.
+   */
+  static void scheduleDrain(const std::shared_ptr<DispatcherData> &data,
+                            const WakeFn &wake) {
+    if (data->drainScheduled.exchange(true)) {
+      return;
+    }
+    std::weak_ptr<DispatcherData> weakData = data;
+    bool posted = wake([weakData]() {
+      auto data = weakData.lock();
+      if (!data) {
+        return;
+      }
+      // Clear the flag before swapping the queue so that anything queued
+      // after the swap schedules a fresh drain.
+      data->drainScheduled.store(false);
+      drain(data);
+    });
+    if (!posted) {
+      data->drainScheduled.store(false);
+    }
+  }
+
+public:
+  Dispatcher() : _data(currentThreadData()) {}
 
   /**
    * Get the dispatcher for the current thread.
@@ -65,26 +165,52 @@ public:
     auto it = _dispatcherRegistry.find(threadId);
     if (it != _dispatcherRegistry.end()) {
       if (auto data = it->second.lock()) {
-        auto dispatcher = std::make_shared<Dispatcher>();
-        dispatcher->_data = data;
-        dispatcher->_threadId = threadId;
-        return dispatcher;
+        return std::shared_ptr<Dispatcher>(new Dispatcher(std::move(data)));
       }
     }
     return nullptr;
   }
 
   /**
+   * Registers the function used to post a drain task to the current thread's
+   * event loop. Must be called on the thread the callback posts to. Any
+   * operations already pending are processed immediately.
+   */
+  static void registerWake(WakeFn wake) {
+    auto data = currentThreadData();
+    {
+      std::lock_guard<std::mutex> lock(data->queueMutex);
+      data->wake = std::move(wake);
+    }
+    data->drainScheduled.store(false);
+    drain(data);
+  }
+
+  /**
    * Queue an operation to be executed on the dispatcher's thread.
-   * The operation will be executed when processQueue() is called on that
-   * thread.
+   *
+   * On the owning thread the operation runs immediately. From any other
+   * thread it is queued and a drain is posted to the owning thread through
+   * its wake callback, if one is registered.
    */
   void run(Operation op) {
     if (!_data)
       return;
 
-    std::lock_guard<std::mutex> lock(_data->queueMutex);
-    _data->operationQueue.push(std::move(op));
+    if (std::this_thread::get_id() == _data->threadId) {
+      op();
+      return;
+    }
+
+    WakeFn wake;
+    {
+      std::lock_guard<std::mutex> lock(_data->queueMutex);
+      _data->operationQueue.push(std::move(op));
+      wake = _data->wake;
+    }
+    if (wake) {
+      scheduleDrain(_data, wake);
+    }
   }
 
   /**
@@ -97,24 +223,11 @@ public:
       return 0;
 
     // Only process if we're on the correct thread
-    if (std::this_thread::get_id() != _threadId) {
+    if (std::this_thread::get_id() != _data->threadId) {
       return 0;
     }
 
-    std::queue<Operation> operations;
-    {
-      std::lock_guard<std::mutex> lock(_data->queueMutex);
-      operations.swap(_data->operationQueue);
-    }
-
-    size_t count = operations.size();
-    while (!operations.empty()) {
-      auto &op = operations.front();
-      op();
-      operations.pop();
-    }
-
-    return count;
+    return drain(_data);
   }
 
   /**
@@ -129,13 +242,19 @@ public:
   }
 
   /**
+   * Returns the id of the thread this dispatcher posts to.
+   */
+  std::thread::id getThreadId() const {
+    return _data ? _data->threadId : std::thread::id();
+  }
+
+  /**
    * Clean up dispatcher for a thread that's shutting down.
    */
   static void cleanup() {
     if (_threadDispatcher) {
       // Process any remaining operations
-      auto dispatcher = getDispatcher();
-      dispatcher->processQueue();
+      drain(_threadDispatcher);
 
       // Remove from registry
       std::lock_guard<std::mutex> lock(_registryMutex);

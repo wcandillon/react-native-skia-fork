@@ -31,6 +31,7 @@ public:
   void setSize(int width, int height) override {
     std::static_pointer_cast<RNSkMetalCanvasProvider>(this->getCanvasProvider())
         ->setSize(width, height);
+    this->onSurfaceChanged();
   }
 
   void setUseP3ColorSpace(bool useP3ColorSpace) override {
@@ -41,6 +42,7 @@ public:
   void setHighBitDepth(bool highBitDepth) override {
     std::static_pointer_cast<RNSkMetalCanvasProvider>(this->getCanvasProvider())
         ->setHighBitDepth(highBitDepth);
+    this->onSurfaceChanged();
   }
 
   std::shared_ptr<RNSkia::RNSkView> getDrawView() override {

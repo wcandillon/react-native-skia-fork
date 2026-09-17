@@ -27,6 +27,12 @@ public:
 
   bool renderToCanvas(const std::function<void(SkCanvas *)> &cb) override;
 
+#if defined(SK_GRAPHITE)
+  std::optional<RNSkDeferredTarget> getDeferredTarget() override;
+
+  bool presentRecording(skgpu::graphite::Recording *recording) override;
+#endif
+
   void surfaceAvailable(jobject surface, int width, int height, bool opaque,
                         bool highBitDepth);
 

@@ -47,6 +47,7 @@ import { JsiSkNativeBufferFactory } from "./JsiSkNativeBufferFactory";
 import { createVideo } from "./JsiVideo";
 import { throwNotImplementedOnRNWeb } from "./Host";
 import { JsiSkottieFactory } from "./JsiSkottieFactory";
+import { JsiSkContext } from "./JsiSkContext";
 
 export const JsiSkApi = (CanvasKit: CanvasKit): Skia => ({
   Point: (x: number, y: number) =>
@@ -139,6 +140,7 @@ export const JsiSkApi = (CanvasKit: CanvasKit): Skia => ({
   Recorder: () => {
     return throwNotImplementedOnRNWeb<JsiRecorder>();
   },
+  Context: new JsiSkContext(CanvasKit),
   getNativeDevice: () => {
     return throwNotImplementedOnRNWeb<bigint>();
   },

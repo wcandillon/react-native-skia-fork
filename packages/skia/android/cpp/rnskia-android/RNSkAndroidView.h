@@ -38,6 +38,7 @@ public:
                         bool highBitDepth) override {
     std::static_pointer_cast<RNSkOpenGLCanvasProvider>(T::getCanvasProvider())
         ->surfaceAvailable(surface, width, height, opaque, highBitDepth);
+    T::onSurfaceChanged();
     RNSkView::redraw();
   }
 
@@ -50,6 +51,7 @@ public:
                           bool highBitDepth) override {
     std::static_pointer_cast<RNSkOpenGLCanvasProvider>(T::getCanvasProvider())
         ->surfaceSizeChanged(surface, width, height, opaque, highBitDepth);
+    T::onSurfaceChanged();
     // This is only need for the first time to frame, this renderImmediate call
     // will invoke updateTexImage for the previous frame
     RNSkView::redraw();

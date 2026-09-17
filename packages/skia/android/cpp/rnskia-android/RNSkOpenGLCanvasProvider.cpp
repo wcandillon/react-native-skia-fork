@@ -76,6 +76,32 @@ bool RNSkOpenGLCanvasProvider::renderToCanvas(
   return false;
 }
 
+#if defined(SK_GRAPHITE)
+std::optional<RNSkDeferredTarget>
+RNSkOpenGLCanvasProvider::getDeferredTarget() {
+  if (_surfaceHolder == nullptr) {
+    return std::nullopt;
+  }
+  return _surfaceHolder->getDeferredTarget();
+}
+
+bool RNSkOpenGLCanvasProvider::presentRecording(
+    skgpu::graphite::Recording *recording) {
+  if (_surfaceHolder == nullptr) {
+    return false;
+  }
+  if (_jSurfaceTexture) {
+    // Same as renderToCanvas: let the TextureView consume the previous frame.
+    JNIEnv *env = facebook::jni::Environment::current();
+    env->CallVoidMethod(_jSurfaceTexture, _updateTexImageMethod);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+    }
+  }
+  return _surfaceHolder->presentRecording(recording);
+}
+#endif
+
 void RNSkOpenGLCanvasProvider::surfaceAvailable(jobject jSurfaceTexture,
                                                 int width, int height,
                                                 bool opaque,

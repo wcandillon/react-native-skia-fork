@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "RNSkFrameScheduler.h"
 #include "RNSkVideo.h"
 #include "RNWindowContext.h"
 
@@ -62,6 +63,13 @@ public:
    * @param func Function to run.
    */
   virtual void runOnMainThread(std::function<void()> func) = 0;
+
+  /**
+   * Creates a vsync driver that runs `onFrame` on the main thread at the next
+   * vsync after requestFrame() (see RNSkFrameScheduler).
+   */
+  virtual std::shared_ptr<RNSkFrameScheduler>
+  makeFrameScheduler(std::function<void()> onFrame) = 0;
 
   /**
    * Takes a screenshot of a given view represented by the view tag

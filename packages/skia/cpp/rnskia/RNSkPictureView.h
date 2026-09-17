@@ -64,7 +64,7 @@ private:
     // modified from the JS thread while we're drawing on the render thread
     sk_sp<SkPicture> picture = _picture;
     auto pd = _platformContext->getPixelDensity();
-    return canvasProvider->renderToCanvas([=](SkCanvas *canvas) {
+    bool presented = canvasProvider->renderToCanvas([=](SkCanvas *canvas) {
       canvas->clear(SK_ColorTRANSPARENT);
       canvas->save();
       canvas->scale(pd, pd);
@@ -73,6 +73,10 @@ private:
       }
       canvas->restore();
     });
+    if (presented) {
+      notePresented();
+    }
+    return presented;
   }
 
   std::shared_ptr<RNSkPlatformContext> _platformContext;
@@ -100,6 +104,9 @@ public:
           // Clear picture
           std::static_pointer_cast<RNSkPictureRenderer>(getRenderer())
               ->setPicture(nullptr);
+          continue;
+        }
+        if (!prop.second.isPicture()) {
           continue;
         }
         // Save picture

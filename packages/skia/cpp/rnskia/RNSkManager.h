@@ -68,6 +68,13 @@ private:
    */
   void installBindings();
 
+  /**
+   * Registers the Dispatcher wake callbacks for the JS and main threads so
+   * that GPU resources released by the garbage collector are freed promptly
+   * on their owning thread.
+   */
+  void installDispatcherWakes();
+
   jsi::Runtime *_jsRuntime;
   std::shared_ptr<RNSkPlatformContext> _platformContext;
   std::shared_ptr<facebook::react::CallInvoker> _jsCallInvoker;

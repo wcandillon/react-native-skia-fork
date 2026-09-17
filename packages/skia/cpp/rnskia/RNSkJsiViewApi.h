@@ -13,6 +13,15 @@
 #include "RNSkPictureView.h"
 #include "RNSkPlatformContext.h"
 #include "RNSkView.h"
+
+#include <sys/resource.h>
+#include <sys/time.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#elif defined(__ANDROID__)
+#include <cstdio>
+#include <unistd.h>
+#endif
 #include "api/JsiSkNativeObjects.h"
 #include "jsi/JsiPromises.h"
 #include "jsi/ViewProperty.h"
@@ -288,9 +297,102 @@ public:
     return sizeObj;
   }
 
+  /**
+   Benchmark helper: how many frames the view presented and the timestamps of
+   the most recent ones, on the clock returned by now().
+   */
+  JSI_HOST_FUNCTION(getPresentStats) {
+    if (count != 1 || !arguments[0].isNumber()) {
+      throw jsi::JSError(runtime,
+                         "getPresentStats: expected the view's native id");
+    }
+    auto view = ViewRegistry::getInstance().getView(
+        static_cast<size_t>(arguments[0].asNumber()));
+    auto result = jsi::Object(runtime);
+    result.setProperty(runtime, "now", RNSkRenderer::nowMs());
+    if (view == nullptr || view->getRenderer() == nullptr) {
+      result.setProperty(runtime, "presented", 0);
+      result.setProperty(runtime, "timestamps", jsi::Array(runtime, 0));
+      return result;
+    }
+    auto stats = view->getRenderer()->getPresentStats();
+    result.setProperty(runtime, "presented",
+                       static_cast<double>(stats.presented));
+    auto timestamps = jsi::Array(runtime, stats.timestampsMs.size());
+    for (size_t i = 0; i < stats.timestampsMs.size(); i++) {
+      timestamps.setValueAtIndex(runtime, i, stats.timestampsMs[i]);
+    }
+    result.setProperty(runtime, "timestamps", timestamps);
+    return result;
+  }
+
+  /** Milliseconds on the steady clock used by getPresentStats. */
+  JSI_HOST_FUNCTION(now) { return jsi::Value(RNSkRenderer::nowMs()); }
+
+  /**
+   Backpressure for producers: true while the view holds a recording that
+   has not been presented yet, in which case a new one would only replace it.
+   */
+  JSI_HOST_FUNCTION(hasPendingRecording) {
+    if (count != 1 || !arguments[0].isNumber()) {
+      throw jsi::JSError(runtime,
+                         "hasPendingRecording: expected the view's native id");
+    }
+    auto view = ViewRegistry::getInstance().getView(
+        static_cast<size_t>(arguments[0].asNumber()));
+    if (view == nullptr || view->getRenderer() == nullptr) {
+      return jsi::Value(false);
+    }
+    return jsi::Value(view->getRenderer()->hasPendingFrame());
+  }
+
+  /**
+   Benchmark helper: CPU time consumed by the whole process (all threads) and
+   its resident memory.
+   */
+  JSI_HOST_FUNCTION(getProcessStats) {
+    auto result = jsi::Object(runtime);
+    struct rusage usage;
+    double cpuMs = 0;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+      cpuMs = (usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000.0 +
+              (usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000.0;
+    }
+    double residentBytes = 0;
+#ifdef __APPLE__
+    mach_task_basic_info info;
+    mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&info),
+                  &infoCount) == KERN_SUCCESS) {
+      residentBytes = static_cast<double>(info.resident_size);
+    }
+#elif defined(__ANDROID__)
+    if (FILE *statm = fopen("/proc/self/statm", "r")) {
+      long size = 0, resident = 0;
+      if (fscanf(statm, "%ld %ld", &size, &resident) == 2) {
+        residentBytes =
+            static_cast<double>(resident) * static_cast<double>(getpagesize());
+      }
+      fclose(statm);
+    }
+#endif
+    result.setProperty(runtime, "cpuTimeMs", cpuMs);
+    result.setProperty(runtime, "residentMemoryBytes", residentBytes);
+    result.setProperty(runtime, "now", RNSkRenderer::nowMs());
+    return result;
+  }
+
   static void definePrototype(jsi::Runtime &runtime, jsi::Object &prototype) {
     installHostMethod(runtime, prototype, "setJsiProperty",
                       &RNSkJsiViewApi::setJsiProperty);
+    installHostMethod(runtime, prototype, "getPresentStats",
+                      &RNSkJsiViewApi::getPresentStats);
+    installHostMethod(runtime, prototype, "now", &RNSkJsiViewApi::now);
+    installHostMethod(runtime, prototype, "hasPendingRecording",
+                      &RNSkJsiViewApi::hasPendingRecording);
+    installHostMethod(runtime, prototype, "getProcessStats",
+                      &RNSkJsiViewApi::getProcessStats);
     installHostMethod(runtime, prototype, "requestRedraw",
                       &RNSkJsiViewApi::requestRedraw);
     installHostMethod(runtime, prototype, "makeImageSnapshotAsync",

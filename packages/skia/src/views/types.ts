@@ -7,6 +7,25 @@ export type NativeSkiaViewProps = ViewProps & {
   opaque?: boolean;
 };
 
+/**
+ * Presentation statistics of a view (benchmark helper): frames that reached
+ * the screen and the timestamps of the most recent ones, in milliseconds on
+ * the clock returned by `now`.
+ */
+export interface SkPresentStats {
+  presented: number;
+  timestamps: number[];
+  now: number;
+}
+
+/** Process-wide resource usage (benchmark helper). */
+export interface SkProcessStats {
+  /** CPU time consumed by all threads of the process, in milliseconds. */
+  cpuTimeMs: number;
+  residentMemoryBytes: number;
+  now: number;
+}
+
 export interface ISkiaViewApi {
   web?: boolean;
   setJsiProperty: <T>(nativeId: number, name: string, value: T) => void;
@@ -14,6 +33,15 @@ export interface ISkiaViewApi {
   makeImageSnapshot: (nativeId: number, rect?: SkRect) => SkImage;
   makeImageSnapshotAsync: (nativeId: number, rect?: SkRect) => Promise<SkImage>;
   size: (nativeId: number) => SkSize;
+  getPresentStats: (nativeId: number) => SkPresentStats;
+  /** Milliseconds on the steady clock used by getPresentStats. */
+  now: () => number;
+  /**
+   * True while a recording handed to the view has not been presented yet:
+   * producing another one now would only replace it (backpressure).
+   */
+  hasPendingRecording: (nativeId: number) => boolean;
+  getProcessStats: () => SkProcessStats;
 }
 
 export interface SkiaBaseViewProps extends ViewProps {

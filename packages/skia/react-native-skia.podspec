@@ -189,7 +189,9 @@ Pod::Spec.new do |s|
     'cpp/rnskia/RNDawnWindowContext.h',
     'cpp/rnskia/RNDawnWindowContext.cpp',
     'cpp/rnskia/RNDawnInterop.cpp',
-    'cpp/rnskia/RNImageProvider.h'
+    'cpp/rnskia/RNImageProvider.h',
+    'cpp/rnskia/RNSkDeferredTarget.h',
+    'cpp/api/JsiSkRecording.h'
   ]
   s.exclude_files = graphite_exclusions unless use_graphite
 

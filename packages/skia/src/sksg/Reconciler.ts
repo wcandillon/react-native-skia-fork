@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { OpaqueRoot } from "react-reconciler";
 import ReactReconciler from "react-reconciler";
 
-import type { SkCanvas, Skia } from "../skia/types";
+import type { SkCanvas, SkDeferredTargetInfo, Skia } from "../skia/types";
 import { NodeType } from "../dom/types";
 
 import { debug, sksgHostConfig } from "./HostConfig";
@@ -22,10 +22,11 @@ export class SkiaSGRoot {
 
   constructor(
     public Skia: Skia,
-    nativeId = -1
+    nativeId = -1,
+    useRecording = false
   ) {
     const strictMode = false;
-    this.container = createContainer(Skia, nativeId);
+    this.container = createContainer(Skia, nativeId, useRecording);
     this.root = skiaReconciler.createContainer(
       this.container,
       0,
@@ -59,6 +60,11 @@ export class SkiaSGRoot {
 
   drawOnCanvas(canvas: SkCanvas) {
     this.container.drawOnCanvas(canvas);
+  }
+
+  /** Target reported by a SkiaRecordingView (native Graphite only). */
+  setTarget(target: SkDeferredTargetInfo) {
+    this.container.setTarget(target);
   }
 
   getPicture() {

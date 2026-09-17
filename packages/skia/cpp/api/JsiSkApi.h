@@ -16,6 +16,7 @@
 #include "JsiSkColor.h"
 #include "JsiSkColorFilter.h"
 #include "JsiSkColorFilterFactory.h"
+#include "JsiSkContext.h"
 #include "JsiSkContourMeasureIter.h"
 #include "JsiSkDataFactory.h"
 #include "JsiSkFont.h"
@@ -101,8 +102,8 @@ public:
             std::make_shared<JsiSkTypefaceFontProviderFactory>(context)),
         _paragraphBuilderFactory(
             std::make_shared<JsiSkParagraphBuilderFactory>(context)),
-        _nativeBufferFactory(
-            std::make_shared<JsiNativeBufferFactory>(context)) {
+        _nativeBufferFactory(std::make_shared<JsiNativeBufferFactory>(context)),
+        _skContext(std::make_shared<JsiSkContext>(context)) {
     // We create the system font manager eagerly since it has proven to be too
     // slow to do it on demand
     JsiSkFontMgrFactory::getFontMgr(getContext());
@@ -173,8 +174,7 @@ public:
     // stays owned by DawnContext and is valid for the process lifetime.
     auto &dawnContext = DawnContext::getInstance();
     return jsi::BigInt::fromUint64(
-        runtime,
-        reinterpret_cast<uint64_t>(dawnContext.getWGPUDevice().Get()));
+        runtime, reinterpret_cast<uint64_t>(dawnContext.getWGPUDevice().Get()));
 #else
     throw jsi::JSError(runtime,
                        "getNativeDevice() is only available with the Graphite "
@@ -191,9 +191,7 @@ public:
   // property access returns a fresh JS wrapper around the shared factory
   // instance.
   std::shared_ptr<JsiSkSVGFactory> getSVGFactory() { return _svgFactory; }
-  std::shared_ptr<JsiSkImageFactory> getImageFactory() {
-    return _imageFactory;
-  }
+  std::shared_ptr<JsiSkImageFactory> getImageFactory() { return _imageFactory; }
   std::shared_ptr<JsiSkAnimatedImageFactory> getAnimatedImageFactory() {
     return _animatedImageFactory;
   }
@@ -248,6 +246,7 @@ public:
   std::shared_ptr<JsiNativeBufferFactory> getNativeBufferFactory() {
     return _nativeBufferFactory;
   }
+  std::shared_ptr<JsiSkContext> getSkContext() { return _skContext; }
 
   static void definePrototype(jsi::Runtime &runtime, jsi::Object &prototype) {
     installHostMethod(runtime, prototype, "Video", &JsiSkApi::Video);
@@ -305,6 +304,7 @@ public:
                   &JsiSkApi::getParagraphBuilderFactory);
     installGetter(runtime, prototype, "NativeBuffer",
                   &JsiSkApi::getNativeBufferFactory);
+    installGetter(runtime, prototype, "Context", &JsiSkApi::getSkContext);
   }
 
 private:
@@ -330,5 +330,6 @@ private:
       _typefaceFontProviderFactory;
   std::shared_ptr<JsiSkParagraphBuilderFactory> _paragraphBuilderFactory;
   std::shared_ptr<JsiNativeBufferFactory> _nativeBufferFactory;
+  std::shared_ptr<JsiSkContext> _skContext;
 };
 } // namespace RNSkia

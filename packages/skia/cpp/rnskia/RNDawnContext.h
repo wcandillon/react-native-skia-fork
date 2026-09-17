@@ -2,10 +2,13 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include "RNDawnUtils.h"
 #include "RNDawnWindowContext.h"
 #include "RNImageProvider.h"
+#include "RNSkDeferredTarget.h"
+#include "utils/RNSkLog.h"
 
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
@@ -96,11 +99,100 @@ public:
   void submitRecording(
       skgpu::graphite::Recording *recording,
       skgpu::graphite::SyncToCpu syncToCpu = skgpu::graphite::SyncToCpu::kNo) {
-    std::lock_guard<std::mutex> lock(_mutex);
     skgpu::graphite::InsertRecordingInfo info;
     info.fRecording = recording;
-    fGraphiteContext->insertRecording(info);
+    insertAndSubmit(info, syncToCpu);
+  }
+
+  /**
+   * Inserts one recording (optionally bound to a deferred target surface
+   * through info.fTargetSurface) and submits exactly once. insertRecording
+   * and submit are single-owner on the Graphite context, so both run under
+   * the context mutex. Returns false if the insert was rejected.
+   */
+  bool insertAndSubmit(
+      const skgpu::graphite::InsertRecordingInfo &info,
+      skgpu::graphite::SyncToCpu syncToCpu = skgpu::graphite::SyncToCpu::kNo) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto status = fGraphiteContext->insertRecording(info);
+    if (status != skgpu::graphite::InsertStatus::kSuccess) {
+      RNSkLogger::logToConsole(
+          "insertRecording failed with status %d",
+          static_cast<int>(
+              static_cast<skgpu::graphite::InsertStatus::V>(status)));
+      return false;
+    }
     fGraphiteContext->submit(syncToCpu);
+    return true;
+  }
+
+  /**
+   * Capabilities of swapchain textures on this device. Dawn reports them per
+   * wgpu::Surface (Surface::GetCapabilities), but they come from the adapter
+   * (a constant set on Metal, the physical device's surface capabilities on
+   * Vulkan), so the first window that is configured records them here and
+   * every later window and every JS-produced deferred target reuse them.
+   */
+  struct SwapchainCapabilities {
+    wgpu::TextureUsage usage = wgpu::TextureUsage::RenderAttachment |
+                               wgpu::TextureUsage::TextureBinding |
+                               wgpu::TextureUsage::CopySrc;
+#ifdef __APPLE__
+    bool highBitDepthSupported = true;
+#else
+    bool highBitDepthSupported = false;
+#endif
+    bool known = false;
+  };
+
+  SwapchainCapabilities getSwapchainCapabilities() {
+    std::lock_guard<std::mutex> lock(_capsMutex);
+    return _swapchainCaps;
+  }
+
+  void noteSwapchainCapabilities(wgpu::TextureUsage usage,
+                                 bool highBitDepthSupported) {
+    std::lock_guard<std::mutex> lock(_capsMutex);
+    if (_swapchainCaps.known &&
+        (_swapchainCaps.usage != usage ||
+         _swapchainCaps.highBitDepthSupported != highBitDepthSupported)) {
+      RNSkLogger::logToConsole(
+          "Swapchain capabilities differ between surfaces on the same device "
+          "(usage 0x%x vs 0x%x); deferred targets computed without a view may "
+          "not match this view",
+          static_cast<unsigned>(_swapchainCaps.usage),
+          static_cast<unsigned>(usage));
+    }
+    _swapchainCaps.usage = usage;
+    _swapchainCaps.highBitDepthSupported = highBitDepthSupported;
+    _swapchainCaps.known = true;
+  }
+
+  /**
+   * The single place that turns (pixel size, bit depth) into the exact
+   * SkImageInfo/TextureInfo pair a swapchain texture is wrapped with, used by
+   * both DawnWindowContext::getDeferredTarget() and
+   * Skia.Context.makeDeferredCanvas().
+   */
+  RNSkDeferredTarget makeDeferredTarget(int width, int height,
+                                        bool highBitDepth) {
+    auto caps = getSwapchainCapabilities();
+    bool useHighBitDepth = highBitDepth && caps.highBitDepthSupported;
+    wgpu::TextureFormat format = useHighBitDepth
+                                     ? DawnUtils::HighBitDepthTextureFormat
+                                     : DawnUtils::PreferredTextureFormat;
+    SkColorType colorType = useHighBitDepth ? DawnUtils::HighBitDepthColorType
+                                            : DawnUtils::PreferedColorType;
+    RNSkDeferredTarget target;
+    target.imageInfo =
+        SkImageInfo::Make(width, height, colorType, kPremul_SkAlphaType,
+                          SkColorSpace::MakeSRGB());
+    target.textureInfo = skgpu::graphite::TextureInfos::MakeDawn(
+        skgpu::graphite::DawnTextureInfo(skgpu::graphite::SampleCount::k1,
+                                         skgpu::Mipmapped::kNo, format,
+                                         caps.usage, wgpu::TextureAspect::All));
+    target.highBitDepth = useHighBitDepth;
+    return target;
   }
 
   sk_sp<SkImage> MakeImageFromBuffer(void *buffer) {
@@ -352,8 +444,11 @@ public:
       auto imageProvider = ImageProvider::Make();
       recorderOptions.fImageProvider = imageProvider;
     }
-    static thread_local auto recorder =
-        fGraphiteContext->makeRecorder(recorderOptions);
+    static thread_local auto recorder = [&]() {
+      // makeRecorder is single-owner on the context, like insert/submit.
+      std::lock_guard<std::mutex> lock(_mutex);
+      return fGraphiteContext->makeRecorder(recorderOptions);
+    }();
     if (!recorder) {
       throw std::runtime_error("Failed to create graphite context");
     }
@@ -365,6 +460,8 @@ private:
   std::unique_ptr<skgpu::graphite::Context> fGraphiteContext;
   skgpu::graphite::DawnBackendContext backendContext;
   std::mutex _mutex;
+  std::mutex _capsMutex;
+  SwapchainCapabilities _swapchainCaps;
 
   DawnContext() {
     // No dawnProcSetProcs() here: the monolithic libwebgpu_dawn (shared with

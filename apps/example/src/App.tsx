@@ -36,6 +36,16 @@ import {
   Pictures,
   WebGPU,
   HighBitDepth,
+  Recording,
+  RecordingResize,
+  Benchmarks,
+  BenchMultipleViews,
+  BenchHeadroom,
+  BenchAnimatedList,
+  BenchCanvasRenderers,
+  BenchLatencyDemo,
+  BenchResources,
+  BenchPacing,
 } from "./Examples";
 import { CI, Tests } from "./Tests";
 import { HomeScreen } from "./Home";
@@ -81,6 +91,9 @@ const linking: LinkingOptions<StackParamList> = {
       Pictures: "pictures",
       WebGPU: "webgpu",
       HighBitDepth: "high-bit-depth",
+      Recording: "recording",
+      RecordingResize: "recording-resize",
+      Benchmarks: "benchmarks",
     },
   },
   prefixes: ["rnskia://"],
@@ -251,6 +264,47 @@ const App = () => {
               }}
             />
             <Stack.Screen name="HighBitDepth" component={HighBitDepth} />
+            <Stack.Screen name="Recording" component={Recording} />
+            <Stack.Screen
+              name="RecordingResize"
+              component={RecordingResize}
+            />
+            <Stack.Screen name="Benchmarks" component={Benchmarks} />
+            <Stack.Screen
+              name="BenchMultipleViews"
+              component={BenchMultipleViews}
+              options={{ title: "Multiple views" }}
+            />
+            <Stack.Screen
+              name="BenchHeadroom"
+              component={BenchHeadroom}
+              options={{ title: "Headroom" }}
+            />
+            <Stack.Screen
+              name="BenchAnimatedList"
+              component={BenchAnimatedList}
+              options={{ title: "Animated list" }}
+            />
+            <Stack.Screen
+              name="BenchCanvasRenderers"
+              component={BenchCanvasRenderers}
+              options={{ title: "Canvas renderers" }}
+            />
+            <Stack.Screen
+              name="BenchLatency"
+              component={BenchLatencyDemo}
+              options={{ title: "Input latency" }}
+            />
+            <Stack.Screen
+              name="BenchResources"
+              component={BenchResources}
+              options={{ title: "CPU and memory" }}
+            />
+            <Stack.Screen
+              name="BenchPacing"
+              component={BenchPacing}
+              options={{ title: "Frame pacing" }}
+            />
           </Stack.Navigator>
         </NavigationContainer>
       </GestureHandlerRootView>

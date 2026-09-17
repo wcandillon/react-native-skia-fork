@@ -1,4 +1,5 @@
-import type { Skia, SkCanvas } from "../skia/types";
+import type { Skia, SkCanvas, SkDeferredTargetInfo } from "../skia/types";
+import { Platform } from "../Platform";
 
 import type { Node } from "./Node";
 import type { Recording } from "./Recorder/Recorder";
@@ -28,6 +29,12 @@ export abstract class Container {
     this.unmounted = false;
   }
 
+  /**
+   * Target of the recording view this container draws for (native Graphite
+   * only, see Canvas). No-op for picture-based containers.
+   */
+  setTarget(_target: SkDeferredTargetInfo) {}
+
   unmount() {
     this.unmounted = true;
   }
@@ -55,11 +62,22 @@ export abstract class Container {
 }
 
 export class StaticContainer extends Container {
+  private target: SkDeferredTargetInfo | null = null;
+
   constructor(
     Skia: Skia,
-    private nativeId: number
+    private nativeId: number,
+    // Draw into a SkiaRecordingView (Graphite) instead of a SkiaPictureView.
+    private useRecording = false
   ) {
     super(Skia);
+  }
+
+  setTarget(target: SkDeferredTargetInfo) {
+    this.target = target;
+    if (this.recording) {
+      this.redraw();
+    }
   }
 
   unmount() {
@@ -84,7 +102,24 @@ export class StaticContainer extends Container {
     visit(recorder, this.root);
     this.recording = recorder.getRecording();
     const isOnScreen = this.nativeId !== -1;
-    if (isOnScreen) {
+    if (isOnScreen && this.useRecording) {
+      // Recording view: draw straight into a deferred canvas for the target
+      // the view reported. Nothing to draw before the first onTarget.
+      if (!this.target) {
+        return;
+      }
+      const pd = Platform.PixelRatio;
+      const canvas = this.Skia.Context.makeDeferredCanvas(this.target);
+      canvas.clear(Float32Array.of(0, 0, 0, 0));
+      canvas.save();
+      canvas.scale(pd, pd);
+      this.drawOnCanvas(canvas);
+      canvas.restore();
+      const recording = this.Skia.Context.snap();
+      SkiaViewApi.setJsiProperty(this.nativeId, "recording", recording);
+      // The view shares ownership of the recording.
+      recording.dispose();
+    } else if (isOnScreen) {
       const rec = this.Skia.PictureRecorder();
       const canvas = rec.beginRecording();
       this.drawOnCanvas(canvas);

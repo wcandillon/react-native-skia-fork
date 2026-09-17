@@ -108,7 +108,11 @@ class ReanimatedContainer extends Container {
   }
 }
 
-export const createContainer = (Skia: Skia, nativeId: number) => {
+export const createContainer = (
+  Skia: Skia,
+  nativeId: number,
+  _useRecording = false
+) => {
   if (HAS_REANIMATED_3 && nativeId !== -1) {
     return new ReanimatedContainer(Skia, nativeId);
   } else {

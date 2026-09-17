@@ -1,3 +1,4 @@
+import type { BenchParams } from "./Examples/Benchmarks/shared/params";
 import type { NavigatorScreenParams } from "@react-navigation/native";
 
 import type { Routes as APIRoutes } from "./Examples/API/Routes";
@@ -37,4 +38,14 @@ export type StackParamList = {
   Pictures: undefined;
   WebGPU: undefined;
   HighBitDepth: undefined;
+  Recording: undefined;
+  RecordingResize: undefined;
+  Benchmarks: undefined;
+  BenchMultipleViews: BenchParams | undefined;
+  BenchHeadroom: BenchParams | undefined;
+  BenchAnimatedList: BenchParams | undefined;
+  BenchCanvasRenderers: BenchParams | undefined;
+  BenchLatency: undefined;
+  BenchResources: BenchParams | undefined;
+  BenchPacing: BenchParams | undefined;
 };

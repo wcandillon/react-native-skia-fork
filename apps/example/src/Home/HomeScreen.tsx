@@ -146,6 +146,21 @@ export const HomeScreen = () => {
         description="8-bit vs high bit depth canvas"
         route="HighBitDepth"
       />
+      <HomeScreenButton
+        title="🎞 Recording"
+        description="60 fps recordings from a worklet (Graphite)"
+        route="Recording"
+      />
+      <HomeScreenButton
+        title="📐 Recording Resize"
+        description="Target mismatch while animating (Graphite)"
+        route="RecordingResize"
+      />
+      <HomeScreenButton
+        title="🏁 Benchmarks"
+        description="Recording views vs picture views (Graphite)"
+        route="Benchmarks"
+      />
     </ScrollView>
   );
 };

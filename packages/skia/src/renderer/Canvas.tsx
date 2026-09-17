@@ -20,6 +20,8 @@ import type { SharedValue } from "react-native-reanimated";
 import Rea from "../external/reanimated/ReanimatedProxy";
 import { SkiaViewNativeId } from "../views/SkiaViewNativeId";
 import SkiaPictureViewNativeComponent from "../specs/SkiaPictureViewNativeComponent";
+import SkiaRecordingViewNativeComponent from "../specs/SkiaRecordingViewNativeComponent";
+import type { TargetEvent } from "../specs/SkiaRecordingViewNativeComponent";
 import type { SkImage, SkRect, SkSize } from "../skia/types";
 import { SkiaSGRoot } from "../sksg/Reconciler";
 import { Skia } from "../skia";
@@ -38,6 +40,7 @@ export interface CanvasRef extends FC<CanvasProps> {
 export const useCanvasRef = () => useRef<CanvasRef>(null);
 
 const useReanimatedFrame = !HAS_REANIMATED_3 ? () => {} : Rea.useFrameCallback;
+
 const measure = !HAS_REANIMATED_3 ? null : Rea.measure;
 
 const useCanvasRefPriv: typeof useRef<View> = !HAS_REANIMATED_3
@@ -78,6 +81,13 @@ export interface CanvasProps extends Omit<ViewProps, "onLayout"> {
   ref?: React.Ref<CanvasRef>;
   androidWarmup?: boolean;
   __destroyWebGLContextAfterRender?: boolean;
+  /**
+   * Which native view presents the canvas. "recording" (the default on
+   * Graphite) records frames directly for a SkiaRecordingView; "picture"
+   * draws an SkPicture into a SkiaPictureView, the only option on Ganesh and
+   * on web. Mostly useful to compare the two in benchmarks.
+   */
+  renderer?: "picture" | "recording";
 }
 
 export const Canvas = ({
@@ -90,6 +100,7 @@ export const Canvas = ({
   androidWarmup = false,
   ref,
   onLayout,
+  renderer,
   ...viewProps
 }: CanvasProps) => {
   if (onLayout && Platform.OS !== "web") {
@@ -98,13 +109,26 @@ export const Canvas = ({
     );
   }
   const viewRef = useCanvasRefPriv(null);
+  // On Graphite the declarative renderer records frames on the producing
+  // thread and the view only presents them (SkiaRecordingView); everywhere
+  // else (Ganesh, web) it draws a picture into SkiaPictureView.
+  const canRecord = Platform.OS !== "web" && Skia.Context.isSupported;
+  const useRecordingView = canRecord && renderer !== "picture";
+  if (renderer === "recording" && !canRecord) {
+    console.warn(
+      "<Canvas renderer=\"recording\"> requires the Graphite backend; using the picture renderer."
+    );
+  }
   // Native ID
   const nativeId = useMemo(() => {
     return SkiaViewNativeId.current++;
   }, []);
 
-  // Root
-  const root = useMemo(() => new SkiaSGRoot(Skia, nativeId), [nativeId]);
+  // Root (a new one when the renderer changes: the view changes with it)
+  const root = useMemo(
+    () => new SkiaSGRoot(Skia, nativeId, useRecordingView),
+    [nativeId, useRecordingView]
+  );
 
   useReanimatedFrame(() => {
     "worklet";
@@ -167,6 +191,15 @@ export const Canvas = ({
       }) as CanvasRef
   );
 
+  const onTarget = useCallback(
+    (event: { nativeEvent: TargetEvent }) => {
+      const { width, height, highBitDepth: effectiveHighBitDepth } =
+        event.nativeEvent;
+      root.setTarget({ width, height, highBitDepth: effectiveHighBitDepth });
+    },
+    [root]
+  );
+
   const onLayoutWeb = useCallback(
     (e: LayoutChangeEvent) => {
       if (onLayout) {
@@ -179,6 +212,20 @@ export const Canvas = ({
     },
     [onLayout, onSize]
   );
+  if (useRecordingView) {
+    return (
+      <SkiaRecordingViewNativeComponent
+        ref={viewRef}
+        collapsable={false}
+        nativeID={`${nativeId}`}
+        debug={debug}
+        opaque={opaque}
+        highBitDepth={highBitDepth}
+        onTarget={onTarget}
+        {...viewProps}
+      />
+    );
+  }
   return (
     <SkiaPictureViewNativeComponent
       ref={viewRef}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #pragma clang diagnostic push
@@ -9,6 +10,10 @@
 #include "include/core/SkSurface.h"
 
 #pragma clang diagnostic pop
+
+#if defined(SK_GRAPHITE)
+#include "RNSkDeferredTarget.h"
+#endif
 
 namespace RNSkia {
 
@@ -20,6 +25,24 @@ public:
   virtual void resize(int width, int height) = 0;
   virtual int getWidth() = 0;
   virtual int getHeight() = 0;
+
+#if defined(SK_GRAPHITE)
+  /**
+   * Thread-safe description of the swapchain texture a Recording must be
+   * recorded against to be presentable by this window.
+   */
+  virtual std::optional<RNSkDeferredTarget> getDeferredTarget() {
+    return std::nullopt;
+  }
+
+  /**
+   * Binds the current swapchain texture as the recording's deferred target,
+   * inserts it, submits once and presents. Main thread only.
+   */
+  virtual bool presentRecording(skgpu::graphite::Recording *recording) {
+    return false;
+  }
+#endif
 };
 
 } // namespace RNSkia

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <mutex>
+#include <optional>
+
 #include "RNDawnUtils.h"
 #include "RNMetalLayerColorSpace.h"
 #include "RNWindowContext.h"
@@ -31,8 +34,10 @@ public:
         _nativeSurface(nativeSurface), _width(width), _height(height) {
     _format = DawnUtils::PreferredTextureFormat;
     _colorType = DawnUtils::PreferedColorType;
+    bool highBitDepthSupported =
+        surfaceSupportsFormat(DawnUtils::HighBitDepthTextureFormat);
     if (highBitDepth) {
-      if (surfaceSupportsFormat(DawnUtils::HighBitDepthTextureFormat)) {
+      if (highBitDepthSupported) {
         _format = DawnUtils::HighBitDepthTextureFormat;
         _colorType = DawnUtils::HighBitDepthColorType;
       } else {
@@ -41,6 +46,8 @@ public:
             "it, falling back to the 8-bit format");
       }
     }
+    _usage = supportedSurfaceUsage();
+    noteSwapchainCapabilities(_usage, highBitDepthSupported);
     configureSurface();
   }
 
@@ -64,15 +71,28 @@ public:
 
   void present() override;
 
+  std::optional<RNSkDeferredTarget> getDeferredTarget() override;
+
+  bool presentRecording(skgpu::graphite::Recording *recording) override;
+
   void resize(int width, int height) override {
-    _width = width;
-    _height = height;
+    {
+      std::lock_guard<std::mutex> lock(_sizeMutex);
+      _width = width;
+      _height = height;
+    }
     configureSurface();
   }
 
-  int getWidth() override { return _width; }
+  int getWidth() override {
+    std::lock_guard<std::mutex> lock(_sizeMutex);
+    return _width;
+  }
 
-  int getHeight() override { return _height; }
+  int getHeight() override {
+    std::lock_guard<std::mutex> lock(_sizeMutex);
+    return _height;
+  }
 
 private:
   void configureSurface() {
@@ -82,7 +102,7 @@ private:
     config.width = _width;
     config.height = _height;
     config.presentMode = wgpu::PresentMode::Fifo;
-    config.usage = supportedSurfaceUsage();
+    config.usage = _usage;
 #ifdef __APPLE__
     config.alphaMode = wgpu::CompositeAlphaMode::Premultiplied;
 #endif
@@ -129,13 +149,19 @@ private:
     return false;
   }
 
+  // Implemented in the .cpp to keep DawnContext out of this header.
+  void noteSwapchainCapabilities(wgpu::TextureUsage usage,
+                                 bool highBitDepthSupported);
+
   skgpu::graphite::Recorder *_recorder;
   // TODO: keep device in DawnContext? Do we need it for resizing?
   wgpu::Device _device;
   wgpu::Surface _surface;
   [[maybe_unused]] void *_nativeSurface;
   wgpu::TextureFormat _format;
+  wgpu::TextureUsage _usage = wgpu::TextureUsage::RenderAttachment;
   SkColorType _colorType;
+  std::mutex _sizeMutex;
   int _width;
   int _height;
 };

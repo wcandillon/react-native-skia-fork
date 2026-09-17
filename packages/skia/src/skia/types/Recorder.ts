@@ -32,6 +32,7 @@ import type {
 import type { AnimatedProps } from "../../renderer/processors/Animations/Animations";
 
 import type { SkPicture } from "./Picture";
+import type { SkCanvas } from "./Canvas";
 
 export interface BaseRecorder {
   saveGroup(props?: AnimatedProps<Pick<DrawingNodeProps, "zIndex">>): void;
@@ -94,6 +95,8 @@ export interface BaseRecorder {
 
 export interface JsiRecorder extends BaseRecorder {
   play(picture: SkPicture): void;
+  /** Plays the recorded commands into `canvas` (e.g. a deferred canvas). */
+  draw(canvas: SkCanvas): void;
   applyUpdates(variables: SharedValue<unknown>[]): void;
   reset(): void;
 }

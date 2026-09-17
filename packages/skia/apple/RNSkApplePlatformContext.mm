@@ -1,4 +1,5 @@
 #import "RNSkApplePlatformContext.h"
+#import "RNSkAppleFrameScheduler.h"
 
 #import <CoreMedia/CMSampleBuffer.h>
 #include <Metal/Metal.h>
@@ -440,6 +441,11 @@ void RNSkApplePlatformContext::runOnMainThread(std::function<void()> func) {
   dispatch_async(dispatch_get_main_queue(), ^{
     func();
   });
+}
+
+std::shared_ptr<RNSkFrameScheduler>
+RNSkApplePlatformContext::makeFrameScheduler(std::function<void()> onFrame) {
+  return std::make_shared<RNSkAppleFrameScheduler>(std::move(onFrame));
 }
 
 sk_sp<SkImage>

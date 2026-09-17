@@ -1,5 +1,8 @@
+import type { SharedValue } from "react-native-reanimated";
+
 import Rea from "../external/reanimated/ReanimatedProxy";
-import type { Skia, SkPicture } from "../skia/types";
+import type { Skia, SkDeferredTargetInfo, SkPicture } from "../skia/types";
+import { Platform } from "../Platform";
 import {
   HAS_REANIMATED_3,
   HAS_REANIMATED_4,
@@ -31,16 +34,58 @@ const nativeDrawOnscreen = (
   SkiaViewApi.setJsiProperty(nativeId, "picture", picture);
 };
 
+// Graphite: the frame is recorded on the UI thread against the target the
+// SkiaRecordingView reported, then handed to the view as a Recording. No
+// SkPicture is serialized and replayed; the main thread only presents.
+const nativeRecordOnscreen = (
+  Skia: Skia,
+  nativeId: number,
+  recorder: JsiRecorder,
+  target: SharedValue<SkDeferredTargetInfo | null>,
+  pixelDensity: number
+) => {
+  "worklet";
+  const t = target.value;
+  if (!t) {
+    // Nothing can be recorded before the view reports its target; the
+    // mapper runs again when it does.
+    return;
+  }
+  const canvas = Skia.Context.makeDeferredCanvas(t);
+  canvas.clear(Float32Array.of(0, 0, 0, 0));
+  canvas.save();
+  canvas.scale(pixelDensity, pixelDensity);
+  recorder.draw(canvas);
+  canvas.restore();
+  const recording = Skia.Context.snap();
+  SkiaViewApi.setJsiProperty(nativeId, "recording", recording);
+  // The view shares ownership of the recording.
+  recording.dispose();
+};
+
 class NativeReanimatedContainer extends Container {
   private mapperId: number | null = null;
   private picture: SkPicture;
+  // Set (and used) only when the Canvas renders through a recording view.
+  private target: SharedValue<SkDeferredTargetInfo | null> | null = null;
 
   constructor(
     Skia: Skia,
-    private nativeId: number
+    private nativeId: number,
+    useRecording: boolean
   ) {
     super(Skia);
     this.picture = Skia.Picture.MakePicture(null)!;
+    if (useRecording) {
+      this.target = Rea.makeMutable<SkDeferredTargetInfo | null>(null);
+    }
+  }
+
+  setTarget(target: SkDeferredTargetInfo) {
+    if (this.target) {
+      // The mapper below depends on this value: a new target redraws.
+      this.target.value = target;
+    }
   }
 
   unmount() {
@@ -67,6 +112,37 @@ class NativeReanimatedContainer extends Container {
     visit(recorder, this.root);
     const sharedValues = recorder.getSharedValues();
     const sharedRecorder = recorder.getRecorder();
+    const { target, Skia } = this;
+    if (target) {
+      const pixelDensity = Platform.PixelRatio;
+      // First frame (if the target is already known)
+      Rea.runOnUI(() => {
+        "worklet";
+        nativeRecordOnscreen(
+          Skia,
+          nativeId,
+          sharedRecorder,
+          target,
+          pixelDensity
+        );
+      })();
+      // Animate, and re-record whenever the view's target changes.
+      this.mapperId = Rea.startMapper(
+        () => {
+          "worklet";
+          sharedRecorder.applyUpdates(sharedValues);
+          nativeRecordOnscreen(
+            Skia,
+            nativeId,
+            sharedRecorder,
+            target,
+            pixelDensity
+          );
+        },
+        [...sharedValues, target]
+      );
+      return;
+    }
     // Draw first frame
     Rea.runOnUI(() => {
       "worklet";
@@ -103,9 +179,13 @@ const reanimatedSupportError = () => {
   );
 };
 
-export const createContainer = (Skia: Skia, nativeId: number) => {
+export const createContainer = (
+  Skia: Skia,
+  nativeId: number,
+  useRecording = false
+) => {
   if (HAS_REANIMATED_4 && nativeId !== -1) {
-    return new NativeReanimatedContainer(Skia, nativeId);
+    return new NativeReanimatedContainer(Skia, nativeId, useRecording);
   } else {
     if (HAS_REANIMATED_3 && !HAS_REANIMATED_4) {
       const message = reanimatedSupportError();
@@ -121,6 +201,6 @@ export const createContainer = (Skia: Skia, nativeId: number) => {
         );
       }
     }
-    return new StaticContainer(Skia, nativeId);
+    return new StaticContainer(Skia, nativeId, useRecording);
   }
 };

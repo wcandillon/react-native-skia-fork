@@ -18,6 +18,7 @@
 
 #include "AHardwareBufferUtils.h"
 #include "JniPlatformContext.h"
+#include "RNSkAndroidFrameScheduler.h"
 #include "RNSkAndroidVideo.h"
 #include "RNSkPlatformContext.h"
 
@@ -276,6 +277,15 @@ public:
 
   void runOnMainThread(std::function<void()> task) override {
     _jniPlatformContext->runTaskOnMainThread(std::move(task));
+  }
+
+  std::shared_ptr<RNSkFrameScheduler>
+  makeFrameScheduler(std::function<void()> onFrame) override {
+    auto *jniPlatformContext = _jniPlatformContext;
+    return std::make_shared<RNSkAndroidFrameScheduler>(
+        std::move(onFrame), [jniPlatformContext](std::function<void()> task) {
+          jniPlatformContext->runTaskOnMainThread(std::move(task));
+        });
   }
 
   sk_sp<SkImage> takeScreenshotFromViewTag(size_t tag) override {
