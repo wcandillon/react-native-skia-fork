@@ -31,11 +31,6 @@ export const Benchmarks = () => (
       route="BenchCanvasRenderers"
     />
     <HomeScreenButton
-      title="👆 Input latency (demo)"
-      description="Drag on both renderers, touch-to-present readout"
-      route="BenchLatency"
-    />
-    <HomeScreenButton
       title="🔋 CPU and memory"
       description="Process CPU time and resident memory per mode"
       route="BenchResources"

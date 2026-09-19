@@ -116,12 +116,13 @@ Nothing is drawn on the main thread. Ever.
 
 ---
 
-## What it is not.
+## And `<Canvas>` gets it for free.
 
-A `<Canvas>` still draws on the UI runtime, which is the main thread.
-There, the recording renderer is not faster yet.
+The declarative renderer records on its own producer thread.
+The UI runtime only flags what changed.
 
-The win is for producers on their own thread.
+Six canvases, 10,000 circles each, simulator:
+UI 41 → 60 fps, worst frame 69 → 17 ms, views 21 → 42 fps.
 
 ---
 

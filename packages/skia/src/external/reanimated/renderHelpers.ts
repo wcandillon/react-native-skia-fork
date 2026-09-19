@@ -11,6 +11,14 @@ export let HAS_REANIMATED_3 = false;
 export let HAS_REANIMATED_4 = false;
 
 /**
+ * True when react-native-worklets can create a dedicated worklet runtime
+ * (createWorkletRuntime and runOnRuntime). The recording renderer draws
+ * canvases on such a runtime, a real background thread, instead of on the
+ * UI runtime which lives on the main thread.
+ */
+export let HAS_WORKLET_RUNTIMES = false;
+
+/**
  * Major version of the installed react-native-reanimated package, or null if
  * it is not installed. Used to give actionable diagnostics when the
  * integration cannot be enabled.
@@ -40,6 +48,10 @@ try {
       const worklets = require("react-native-worklets");
       HAS_REANIMATED_4 =
         typeof worklets.registerCustomSerializable === "function";
+      HAS_WORKLET_RUNTIMES =
+        HAS_REANIMATED_4 &&
+        typeof worklets.createWorkletRuntime === "function" &&
+        typeof worklets.runOnRuntime === "function";
     } catch (e) {
       // react-native-worklets not installed
     }

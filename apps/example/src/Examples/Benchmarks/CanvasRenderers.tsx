@@ -29,16 +29,16 @@ import {
   useRun,
 } from "./shared/ui";
 
-// The declarative <Canvas> with its two renderers, same scene, same thread.
+// The declarative <Canvas> with its two renderers, same scene.
 //
-// A <Canvas> is drawn by the Reanimated UI runtime, which is the main thread,
-// in both modes; nothing moves to another thread here. The renderer decides
-// what the main thread does with the scene after drawing it:
-// - picture: draw into an SkPicture, hand it to a SkiaPictureView, which
-//   replays it into the swapchain and snaps.
-// - recording: draw straight into a deferred canvas and snap; the view only
-//   presents. The SkPicture round-trip is gone.
-// The difference between the two is the cost of that round-trip.
+// - picture: the Reanimated UI runtime (the main thread) draws the scene
+//   into an SkPicture and a SkiaPictureView replays it into the swapchain
+//   and snaps, on the main thread.
+// - recording: the scene is recorded on the library's producer thread (a
+//   worklet runtime, see sksg/WorkerProducer.ts) and a SkiaRecordingView only
+//   presents. The UI runtime just flags changed inputs.
+// Same scene graph, same animated values; only the thread that pays for the
+// drawing differs.
 
 const N = 6;
 const COUNTS = [2000, 5000, 10000, 20000];
@@ -192,9 +192,9 @@ export const BenchCanvasRenderers = () => {
       )}
       <Text style={styles.stat}>{`renderer="${mode}" on six <Canvas> elements`}</Text>
       <Note>
-        Both renderers draw on the UI thread here, so this isolates the cost
-        of the SkPicture round-trip that the recording renderer removes. Use
-        "Multiple views" for the effect of a separate producer thread.
+        Picture: the UI thread draws and the views replay on the main thread.
+        Recording: the library's producer thread draws, the main thread only
+        presents. The scene graph and animated values are identical.
       </Note>
     </ScrollView>
   );

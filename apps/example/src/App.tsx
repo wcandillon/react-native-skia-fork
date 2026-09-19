@@ -43,7 +43,6 @@ import {
   BenchHeadroom,
   BenchAnimatedList,
   BenchCanvasRenderers,
-  BenchLatencyDemo,
   BenchResources,
   BenchPacing,
 } from "./Examples";
@@ -131,7 +130,7 @@ const App = () => {
             screenOptions={{
               headerLeft: HeaderLeft,
             }}
-            initialRouteName={CI ? "Tests" : "Home"}
+            initialRouteName={CI ? "Tests" : "BenchCanvasRenderers"}
           >
             <Stack.Screen
               name="Home"
@@ -288,12 +287,8 @@ const App = () => {
             <Stack.Screen
               name="BenchCanvasRenderers"
               component={BenchCanvasRenderers}
+              initialParams={{ mode: "picture", autoRun: true }}
               options={{ title: "Canvas renderers" }}
-            />
-            <Stack.Screen
-              name="BenchLatency"
-              component={BenchLatencyDemo}
-              options={{ title: "Input latency" }}
             />
             <Stack.Screen
               name="BenchResources"

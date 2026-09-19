@@ -45,7 +45,6 @@ export type StackParamList = {
   BenchHeadroom: BenchParams | undefined;
   BenchAnimatedList: BenchParams | undefined;
   BenchCanvasRenderers: BenchParams | undefined;
-  BenchLatency: undefined;
   BenchResources: BenchParams | undefined;
   BenchPacing: BenchParams | undefined;
 };
